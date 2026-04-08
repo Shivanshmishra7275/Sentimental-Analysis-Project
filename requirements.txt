@@ -1,0 +1,11 @@
+transformers
+datasets==2.18.0
+torch>=2.2.0
+accelerate==0.29.3
+tqdm
+scikit-learn
+pandas
+numpy
+gradio
+uvicorn[standard]
+python-dotenv
