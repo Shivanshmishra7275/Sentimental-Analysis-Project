@@ -1,8 +1,7 @@
 import os
-from typing import Dict, Mapping
+from typing import Any, Dict, List
 
-import torch
-from transformers import pipeline
+from huggingface_hub import InferenceClient
 
 from .config import DEFAULT_MODEL_NAME
 
@@ -21,14 +20,37 @@ class SentimentService:
         model_name: str | None = None,
         *,
         min_confidence: float = 0.6,
+        backend: str | None = None,
     ) -> None:
+        """Initialise the sentiment service.
+
+        Parameters
+        ----------
+        model_name:
+            Hugging Face model ID. If not provided, reads the MODEL_NAME
+            environment variable and falls back to DEFAULT_MODEL_NAME.
+        min_confidence:
+            Threshold below which predictions are marked as UNCERTAIN.
+        backend:
+            - "local": use transformers + a local model (requires torch etc.).
+            - "remote": use the Hugging Face Inference API (lightweight).
+            - None / "auto": prefer local if available, else remote.
+        """
+
         model_id = model_name or os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
-        device = 0 if torch.cuda.is_available() else -1
-        self._pipeline = pipeline(
-            "sentiment-analysis", model=model_id, device=device
-        )
-        # below this threshold we will mark the prediction as UNCERTAIN
+        backend = backend or os.getenv("SENTIMENT_BACKEND", "auto").lower()
+
+        # For deployment on Vercel we avoid heavyweight local dependencies
+        # like torch and instead rely on the hosted Inference API.
+        use_remote = backend == "remote" or backend == "auto"
+
+        self._mode = "remote" if use_remote else "local"
+        self._model_id = model_id
         self._min_confidence = float(min_confidence)
+
+        # Remote backend via Hugging Face Inference API.
+        hf_token = os.getenv("HF_TOKEN")
+        self._client = InferenceClient(model=model_id, token=hf_token)
 
     @staticmethod
     def _normalise_label(raw_label: str) -> str:
@@ -38,6 +60,16 @@ class SentimentService:
         if label.startswith("POS"):
             return "POSITIVE"
         return label
+
+    def _run_remote(self, text: str) -> List[Dict[str, Any]]:
+        """Run inference via the remote Hugging Face Inference API."""
+
+        # top_k=None returns scores for all labels
+        outputs = self._client.text_classification(text, top_k=None)
+        # Ensure we always work with a list of dicts
+        if isinstance(outputs, dict):
+            return [outputs]
+        return list(outputs or [])
 
     def predict(self, text: str) -> Dict[str, object]:
         """Return a robust sentiment prediction for a single piece of text.
@@ -53,21 +85,9 @@ class SentimentService:
 
         cleaned = " ".join(text.strip().split())
 
-        # Ask Transformers to return all scores so we can inspect confidence.
-        raw_outputs = self._pipeline(cleaned, return_all_scores=True)
-
-        # transformers>=5 can return either:
-        # - List[Dict] for a single string input, or
-        # - List[List[Dict]] when called with a batch.
-        if isinstance(raw_outputs, list):
-            if raw_outputs and isinstance(raw_outputs[0], dict):
-                outputs = raw_outputs
-            elif raw_outputs and isinstance(raw_outputs[0], list):
-                outputs = raw_outputs[0]
-            else:
-                outputs = []
-        else:
-            outputs = []
+        # For the Vercel-friendly deployment we always use the lightweight
+        # remote backend.
+        outputs = self._run_remote(cleaned)
 
         probs: Dict[str, float] = {}
         for item in outputs:
