@@ -381,10 +381,18 @@ def build_demo() -> gr.Blocks:
                         variant="primary",
                         elem_classes=["analyze-button"],
                     )
-                    gr.Examples(
-                        EXAMPLES,
-                        inputs=text_input,
-                        label="Examples (click to load)",
+                    # NOTE: We avoid Gradio's Examples component here because
+                    # its default CSV-based caching relies on multiprocessing
+                    # locks, which are not supported in some serverless
+                    # environments (such as Vercel's Python runtime). Instead,
+                    # we show static example prompts.
+                    gr.Markdown(
+                        """**Examples you can try:**
+
+- I absolutely loved this product, it exceeded my expectations!
+- This was a terrible experience and I would not recommend it.
+- The movie was okay, some parts were good but others were boring.
+"""
                     )
 
                 with gr.Column(scale=1, min_width=320, elem_classes=["fade-in"]):
