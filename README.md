@@ -208,6 +208,14 @@ There are several free or low‑cost ways to deploy this web app:
   - Use the provided `Dockerfile` to push an image to Docker Hub or a container registry.
   - Deploy it to a platform that supports free container apps.
 
+- **Vercel Python runtime (ASGI app)**
+   - Connect this GitHub repo to Vercel and set the root directory to `sentiment-mlops-app`.
+   - Vercel detects `src/app.py` which exposes a top‑level ASGI application named `app` via Gradio's `App.create_app`, so no custom server or Uvicorn command is necessary.
+   - Define environment variables in the Vercel project settings, especially:
+      - `HF_TOKEN` – your Hugging Face Inference API token so remote sentiment inference works.
+      - (Optional) `MODEL_NAME` and `SENTIMENT_BACKEND` if you want to override defaults.
+   - The `.python-version` file pins Python 3.13, matching local development and ensuring a compatible runtime.
+
 In all cases, inference is relatively lightweight and can run comfortably on CPU. GPU is mainly required for **training**, which is handled in Colab.
 
 ---

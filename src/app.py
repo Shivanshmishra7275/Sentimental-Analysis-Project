@@ -435,6 +435,15 @@ source of absolute truth.
 _demo = build_demo()
 app = App.create_app(_demo)
 
+# Lightweight health endpoint for platforms like Vercel.
+# If the underlying ASGI app exposes a FastAPI-like interface, we
+# register a simple JSON health check; otherwise we skip this step.
+if hasattr(app, "get"):
+
+    @app.get("/health")  # type: ignore[attr-defined]
+    async def _healthcheck() -> dict:
+        return {"status": "ok"}
+
 
 def main() -> None:
     port = int(os.getenv("PORT", 7860))
