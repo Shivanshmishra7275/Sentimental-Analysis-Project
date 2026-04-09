@@ -49,8 +49,21 @@ class SentimentService:
         self._min_confidence = float(min_confidence)
 
         # Remote backend via Hugging Face Inference API.
+        # Note: the environment variable is **HF_TOKEN** (underscore),
+        # not "HF-TOKEN". This is the name you must configure in Vercel
+        # or any other hosting provider.
         hf_token = os.getenv("HF_TOKEN")
+        self._hf_token_is_set = bool(hf_token)
         self._client = InferenceClient(model=model_id, token=hf_token)
+
+        # Lightweight debug log for serverless environments (e.g. Vercel).
+        # This never prints the token itself, only whether it is present.
+        print(
+            "[SentimentService] initialised",
+            f"model={model_id!r}",
+            f"mode={self._mode}",
+            f"hf_token_set={self._hf_token_is_set}",
+        )
 
     @staticmethod
     def _normalise_label(raw_label: str) -> str:
@@ -62,19 +75,26 @@ class SentimentService:
         return label
 
     def _run_remote(self, text: str) -> List[Dict[str, Any]]:
-        """Run inference via the remote Hugging Face Inference API."""
-        # top_k=None returns scores for all labels
+        """Run inference via the remote Hugging Face Inference API.
+
+        Any exception is caught and converted into an empty list so that
+        the caller can decide how to surface the problem. This is important
+        for environments like Vercel where unhandled exceptions would
+        otherwise result in a generic 500 error.
+        """
         try:
-            outputs = self._client.text_classification(text, top_k=None)
+            outputs = self._client.text_classification(text)
         except Exception as exc:  # pragma: no cover - defensive guard
-            # Degrade gracefully if the remote API is unavailable or misconfigured
-            # (e.g. network issues, bad HF token, rate limits). This prevents
-            # the Vercel function from crashing while still surfacing a
-            # meaningful but safe result to the caller.
+            # Degrade gracefully if the remote API is unavailable or
+            # misconfigured (network issues, bad HF token, rate limits,
+            # missing permissions, etc.). We log the error to the server
+            # console so it is visible in Vercel logs, but we do not leak
+            # sensitive details back to the browser.
             print(
                 f"Hugging Face Inference API error for model {self._model_id!r}:",
                 repr(exc),
             )
+            # An empty list signals a backend problem to the caller.
             return []
 
         # Ensure we always work with a list of dicts
@@ -96,9 +116,10 @@ class SentimentService:
         """Return a robust sentiment prediction for a single piece of text.
 
         The result dictionary contains:
-        - label: POSITIVE, NEGATIVE or UNCERTAIN
+        - label: POSITIVE, NEGATIVE, UNCERTAIN or ERROR
         - score: confidence score for the chosen label in [0, 1]
         - probs: mapping of labels -> probabilities for transparency
+        - error (optional): human-friendly backend error description
         """
 
         if not text or not text.strip():
@@ -112,9 +133,27 @@ class SentimentService:
 
         probs: Dict[str, float] = {}
         for item in outputs:
-            raw_label = str(item.get("label", ""))
-            score = float(item.get("score", 0.0))
-            probs[self._normalise_label(raw_label)] = score
+            # huggingface_hub >=0.22 returns TextClassificationOutputElement
+            # instances; older versions may return plain dicts. Support both.
+            raw_label: str
+            score_val: float
+
+            if hasattr(item, "label") and hasattr(item, "score"):
+                raw_label = str(getattr(item, "label"))
+                score_val = float(getattr(item, "score"))
+            elif isinstance(item, dict):
+                raw_label = str(item.get("label", ""))
+                score_val = float(item.get("score", 0.0))
+            else:
+                # Unexpected element type – log and skip.
+                print(
+                    "Unexpected element in text_classification output:",
+                    type(item),
+                    repr(item),
+                )
+                continue
+
+            probs[self._normalise_label(raw_label)] = score_val
 
         # For this binary sentiment model, newer transformers versions may
         # return only the top class with its probability. To give users a
@@ -129,7 +168,30 @@ class SentimentService:
                 probs.setdefault("POSITIVE", comp)
 
         if not probs:
-            return {"label": "UNCERTAIN", "score": 0.0, "probs": {}}
+            # If the remote backend returned nothing, surface a clearer
+            # diagnostic so that the UI can show *why* predictions are
+            # failing instead of silently reporting 0% confidence.
+            if not self._hf_token_is_set:
+                error_msg = (
+                    "The backend could not contact the Hugging Face "
+                    "Inference API because HF_TOKEN is not configured. "
+                    "Set an environment variable named HF_TOKEN with a "
+                    "valid token and redeploy the app."
+                )
+            else:
+                error_msg = (
+                    "The backend called the Hugging Face Inference API "
+                    "but did not receive a valid prediction. Check your "
+                    "HF_TOKEN, model name, and network access in the "
+                    "server logs."
+                )
+
+            return {
+                "label": "ERROR",
+                "score": 0.0,
+                "probs": {},
+                "error": error_msg,
+            }
 
         best_label = max(probs, key=probs.get)
         best_score = probs[best_label]

@@ -38,6 +38,11 @@ def _format_explanation(label: str, score: float, probs: dict | None = None) -> 
             "⚠️ The model thinks this text is **NEGATIVE** "
             f"with confidence **{fmt_pct(score)}**."
         )
+    elif label == "ERROR":
+        parts.append(
+            "⚠️ An error occurred while calling the backend sentiment "
+            "service. Please check the deployment logs and configuration."
+        )
     else:  # UNCERTAIN or anything else
         parts.append(
             "🤔 The model is **not confident enough** to make a clear "
@@ -72,6 +77,13 @@ def predict_sentiment(text: str) -> tuple[str, dict]:
         score = float(result.get("score", 0.0))
         probs = result.get("probs", {}) or {}
         explanation = _format_explanation(label, score, probs)
+
+        # If the backend supplied a human-readable error message, append it
+        # so the user understands why predictions are failing instead of
+        # only seeing a generic low-confidence message.
+        error_msg = result.get("error")
+        if error_msg:
+            explanation = f"{explanation}\n\n> {error_msg}"
         return explanation, probs
     except Exception as exc:  # pragma: no cover - defensive guard
         # Log to server console for debugging
