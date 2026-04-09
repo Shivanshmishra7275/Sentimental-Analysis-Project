@@ -1,6 +1,7 @@
 import os
 
 import gradio as gr
+from gradio.routes import App
 
 from .inference import SentimentService
 
@@ -429,10 +430,16 @@ source of absolute truth.
     return demo
 
 
+# Global ASGI app for deployment platforms (e.g. Vercel)
+# Vercel looks for a top-level `app` object in files such as `src/app.py`.
+_demo = build_demo()
+app = App.create_app(_demo)
+
+
 def main() -> None:
     port = int(os.getenv("PORT", 7860))
-    demo = build_demo()
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    # Reuse the globally constructed demo when running locally.
+    _demo.launch(server_name="0.0.0.0", server_port=port)
 
 
 if __name__ == "__main__":
