@@ -1,7 +1,7 @@
 import os
 
 import gradio as gr
-from gradio.routes import App
+from fastapi import FastAPI
 
 from .inference import SentimentService
 
@@ -441,16 +441,17 @@ source of absolute truth.
 # Global ASGI app for deployment platforms (e.g. Vercel)
 # Vercel looks for a top-level `app` object in files such as `src/app.py`.
 _demo = build_demo()
-app = App.create_app(_demo)
+_fastapi_app = FastAPI()
 
-# Lightweight health endpoint for platforms like Vercel.
-# If the underlying ASGI app exposes a FastAPI-like interface, we
-# register a simple JSON health check; otherwise we skip this step.
-if hasattr(app, "get"):
+# Mount the Gradio Blocks app onto a FastAPI application so that
+# the exported `app` is a standard ASGI-compatible FastAPI instance,
+# matching Vercel's documented Python/ASGI pattern.
+app = gr.mount_gradio_app(_fastapi_app, _demo, path="/")
 
-    @app.get("/health")  # type: ignore[attr-defined]
-    async def _healthcheck() -> dict:
-        return {"status": "ok"}
+
+@_fastapi_app.get("/health")
+async def _healthcheck() -> dict:
+    return {"status": "ok"}
 
 
 def main() -> None:
