@@ -63,13 +63,34 @@ class SentimentService:
 
     def _run_remote(self, text: str) -> List[Dict[str, Any]]:
         """Run inference via the remote Hugging Face Inference API."""
-
         # top_k=None returns scores for all labels
-        outputs = self._client.text_classification(text, top_k=None)
+        try:
+            outputs = self._client.text_classification(text, top_k=None)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            # Degrade gracefully if the remote API is unavailable or misconfigured
+            # (e.g. network issues, bad HF token, rate limits). This prevents
+            # the Vercel function from crashing while still surfacing a
+            # meaningful but safe result to the caller.
+            print(
+                f"Hugging Face Inference API error for model {self._model_id!r}:",
+                repr(exc),
+            )
+            return []
+
         # Ensure we always work with a list of dicts
         if isinstance(outputs, dict):
             return [outputs]
-        return list(outputs or [])
+        if outputs is None:
+            return []
+        if not isinstance(outputs, (list, tuple)):
+            # Unexpected payload shape — log and fall back to an empty result.
+            print(
+                "Unexpected inference output type from Hugging Face client:",
+                type(outputs),
+            )
+            return []
+
+        return list(outputs)
 
     def predict(self, text: str) -> Dict[str, object]:
         """Return a robust sentiment prediction for a single piece of text.
